@@ -1,4 +1,4 @@
---[[photils Auto Tagging plugin
+--[[ photils Auto Tagging plugin
     copyright (c) 2020 Tobias Scheck
 
     darktable is free software: you can redistribute it and/or modify
@@ -13,15 +13,16 @@
 
     You should have received a copy of the GNU General Public License
     along with darktable.  If not, see <http://www.gnu.org/licenses/>.
-]]
+--]]
 
 --[[
     A darktable plugin which tries to predict keywords based on the selected image.
-    This plugin uses photils-cli to handle this task.
-    Photils-cli is an application which passes the image through a neural network and generates a feature vector.
-    This feature vector will be used to find similar images in a self-hosted online database and the corresponding tags.
-    The usage of the feature vector has this advantage that at no time your selected image will leave the PC.
-    Rather a representation of the image is sent.
+    This plugin uses photils-cli to handle this task. Photils-cli is an application
+    which passes the image through a neural network and generates a feature vector.
+    This feature vector will be used to find similar images in a self-hosted online
+    database and the corresponding tags. The usage of the feature vector has this advantage
+    that at no time your selected image will leave the PC. Rather a representation
+    of the image is sent.
 
     ADDITIONAL SOFTWARE NEEDED FOR THIS SCRIPT
     * photils-cli - https://github.com/scheckmedia/photils-cli
@@ -34,7 +35,7 @@
     * Press "Get Tags"
     * Select the tags you want from a list of suggestions
     * Press "Attach .. Tags" to add the selected tags to your image
-]]
+--]]
 
 local dt = require "darktable"
 local du = require "lib/dtutils"
@@ -49,7 +50,6 @@ local gettext = dt.gettext
 gettext.bindtextdomain(MODULE_NAME,
     dt.configuration.config_dir .. PS .. "lua" .. PS .. "locale" .. PS)
 
-print(dt.configuration.config_dir .. PS .. "lua" .. PS .. "locale" .. PS)
 -- helper functions
 
 local function _(msgid)
@@ -73,9 +73,6 @@ local function has_key(tbl, value)
 end
 
 local photils_installed = df.check_if_bin_exists("photils-cli")
-if not photils_installed then
-    dt.print_log(_("photils-cli not found"))
-end
 
 --[[
     local state object
@@ -95,14 +92,15 @@ local PHOTILS = {
 local GUI = {
     container = dt.new_widget("box") {
         orientation = "vertical",
-        sensitive = photils_installed,
+        sensitive = true,
         dt.new_widget("button") {
             label = _("Get Tags"),
+            sensitive = photils_installed,
             clicked_callback = function() PHOTILS.on_tags_clicked() end
         },
         reset_callback = function() PHOTILS.on_reset(true) end
     },
-    active_view = dt.new_widget("stack"),
+    stack = dt.new_widget("stack"),
     prev_button = dt.new_widget("button") {
         label = "<",
         sensitive = false,
@@ -122,8 +120,12 @@ local GUI = {
     tag_box = dt.new_widget("box") {orientation = "vertical"},
     tag_view = dt.new_widget("box") {orientation = "vertical"},
     page_label = dt.new_widget("label") {label = ""},
+    error_view = dt.new_widget("box") {orientation = "vertical"},
     no_tags_label = dt.new_widget("label") {
         label = ""
+    },
+    restart_required_label = dt.new_widget("label") {
+        label = _("requires a restart to be applied")
     },
     attach_button = dt.new_widget("button") {
         label = "",
@@ -215,7 +217,12 @@ function PHOTILS.get_tags(image)
         return
     end
 
-    local command = photils_installed .. " -i " .. tostring(image) .. " -o " ..
+    local executable = photils_installed
+    if dt.configuration.running_os == "macos" then
+        executable =  executable .. "/Contents/MacOS/photils-cli"
+    end
+
+    local command = executable .. " -i " .. tostring(image) .. " -o " ..
                         tmp_file
 
     if dtsys.external_command(command) > 0 then
@@ -248,7 +255,7 @@ function PHOTILS.on_tags_clicked()
 
     if #images == 0 then
         dt.print(_("No image selected."))
-        GUI.active_view.active = GUI.no_tags_label
+        GUI.stack.active = GUI.no_tags_label
         dt.control.sleep(2000)
     else
         if #images > 1 then
@@ -260,11 +267,11 @@ function PHOTILS.on_tags_clicked()
         PHOTILS.get_tags(images[1])
 
         if #PHOTILS.tags == 0 then
-            GUI.active_view.active = GUI.no_tags_label
+            GUI.stack.active = GUI.no_tags_label
             return
         end
 
-        GUI.active_view.active = GUI.tag_view
+        GUI.stack.active = GUI.tag_view
         PHOTILS.paginate()
     end
 end
@@ -290,7 +297,7 @@ function PHOTILS.tag_selected(tag_button)
 end
 
 function PHOTILS.on_reset(with_view)
-    if with_view then GUI.active_view.active = 1 end
+    if with_view then GUI.stack.active = 1 end
 
     for k, _ in pairs(PHOTILS.selected_tags) do
         PHOTILS.selected_tags[k] = nil
@@ -317,6 +324,7 @@ end
 
 if not photils_installed then
     GUI.no_tags_label.label = _("photils-cli not found")
+    dt.print_log(_("photils-cli not found"))
 else
     GUI.no_tags_label.label = _("Select an image, click \"Get Tags\" and get \nsuggestions for tags.")
 end
@@ -328,17 +336,23 @@ GUI.pagination = dt.new_widget("box") {
     GUI.next_button
 }
 
-table.insert(GUI.active_view, GUI.no_tags_label)
-table.insert(GUI.active_view, GUI.tag_view)
+
+table.insert(GUI.error_view, GUI.no_tags_label)
+if not photils_installed then
+    table.insert(GUI.error_view, df.executable_path_widget({"photils-cli"}))
+    table.insert(GUI.error_view, GUI.restart_required_label)
+end
+table.insert(GUI.stack, GUI.error_view)
+table.insert(GUI.stack, GUI.tag_view)
 
 table.insert(GUI.tag_view, GUI.pagination)
 table.insert(GUI.tag_view, GUI.tag_box)
 table.insert(GUI.tag_view, GUI.attach_button)
 table.insert(GUI.tag_view, GUI.warning)
 
-table.insert(GUI.container, GUI.active_view)
+table.insert(GUI.container, GUI.stack)
 
-GUI.active_view.active = 1
+GUI.stack.active = 1
 
 local plugin_display_views = {
     [dt.gui.views.lighttable] = {"DT_UI_CONTAINER_PANEL_RIGHT_CENTER", 100},
