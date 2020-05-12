@@ -4,6 +4,12 @@ A darktable plugin which tries to predict keywords based on the selected image. 
 
 ![](docs/photils-dt.gif)
 
+| Platform | Support            |
+| -------- | ------------------ |
+| Linux    | <center>✔️</center> |
+| MacOS    | <center>✔️</center> |
+| Windows  | <center>✔️</center> |
+
 ## Requirements
 * photils-cli - https://github.com/scheckmedia/photils-cli
 
