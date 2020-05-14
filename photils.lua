@@ -121,7 +121,7 @@ local GUI = {
     tag_view = dt.new_widget("box") {orientation = "vertical"},
     page_label = dt.new_widget("label") {label = ""},
     error_view = dt.new_widget("box") {orientation = "vertical"},
-    no_tags_label = dt.new_widget("label") {
+    warning_label = dt.new_widget("label") {
         label = ""
     },
     restart_required_label = dt.new_widget("label") {
@@ -214,7 +214,7 @@ function PHOTILS.get_tags(image)
     if not f then
         dt.print(string.format(_("Error writing to `%s`"), tmp_file))
         os.remove(tmp_file)
-        return
+        return false
     end
 
     local executable = photils_installed
@@ -222,14 +222,16 @@ function PHOTILS.get_tags(image)
         executable =  executable .. "/Contents/MacOS/photils-cli"
     end
 
-    local command = executable .. " -i " .. tostring(image) .. " -o " ..
-                        tmp_file
+    local in_arg = df.sanitize_filename(tostring(image))
+    local out_arg = df.sanitize_filename(tmp_file)
+    local command = executable .. " -i " .. in_arg .. " -o " .. out_arg
 
-    if dtsys.external_command(command) > 0 then
-        dt.print(string.format(_("%s failed, see terminal output for details",
-                                 MODULE_NAME)))
+    local ret = dtsys.external_command(command)
+    if ret > 0 then
+        dt.print_error(string.format("command %s returned error code %d", command, ret))
         os.remove(tmp_file)
-        return
+
+        return false
     end
 
     for i = #PHOTILS.tags, 1, -1 do
@@ -243,6 +245,8 @@ function PHOTILS.get_tags(image)
     dt.print(string.format(_("%s found %d tags for your image"), MODULE_NAME,
                            #PHOTILS.tags))
     os.remove(tmp_file)
+
+    return true
 end
 
 function PHOTILS.on_tags_clicked()
@@ -255,7 +259,6 @@ function PHOTILS.on_tags_clicked()
 
     if #images == 0 then
         dt.print(_("No image selected."))
-        GUI.stack.active = GUI.no_tags_label
         dt.control.sleep(2000)
     else
         if #images > 1 then
@@ -264,10 +267,18 @@ function PHOTILS.on_tags_clicked()
             dt.control.sleep(2000)
         end
 
-        PHOTILS.get_tags(images[1])
+        if not PHOTILS.get_tags(images[1]) then
+            local msg = string.format(_("%s failed, see terminal output for details"), MODULE_NAME)
+            GUI.warning_label.label = msg
+            GUI.stack.active = GUI.error_view
+            dt.print(msg)
+            return
+        end
 
         if #PHOTILS.tags == 0 then
-            GUI.stack.active = GUI.no_tags_label
+            local msg = string.format(_("No tags where found"), MODULE_NAME)
+            GUI.warning_label.label = msg
+            GUI.stack.active = GUI.error_view
             return
         end
 
@@ -323,10 +334,10 @@ for _ = 1, PHOTILS.per_page, 1 do
 end
 
 if not photils_installed then
-    GUI.no_tags_label.label = _("photils-cli not found")
+    GUI.warning_label.label = _("photils-cli not found")
     dt.print_log(_("photils-cli not found"))
 else
-    GUI.no_tags_label.label = _("Select an image, click \"Get Tags\" and get \nsuggestions for tags.")
+    GUI.warning_label.label = _("Select an image, click \"Get Tags\" and get \nsuggestions for tags.")
 end
 
 GUI.pagination = dt.new_widget("box") {
@@ -337,7 +348,7 @@ GUI.pagination = dt.new_widget("box") {
 }
 
 
-table.insert(GUI.error_view, GUI.no_tags_label)
+table.insert(GUI.error_view, GUI.warning_label)
 if not photils_installed then
     table.insert(GUI.error_view, df.executable_path_widget({"photils-cli"}))
     table.insert(GUI.error_view, GUI.restart_required_label)
