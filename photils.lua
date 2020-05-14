@@ -50,6 +50,11 @@ local gettext = dt.gettext
 gettext.bindtextdomain(MODULE_NAME,
     dt.configuration.config_dir .. PS .. "lua" .. PS .. "locale" .. PS)
 
+local exporter = dt.new_format("jpeg")
+exporter.quality = 80
+exporter.max_height = 224
+exporter.max_width = 224
+
 -- helper functions
 
 local function _(msgid)
@@ -204,7 +209,7 @@ function PHOTILS.attach_tags()
     dt.print(_("Tags successfully attached to image"))
 end
 
-function PHOTILS.get_tags(image)
+function PHOTILS.get_tmp_file()
     local tmp_file = os.tmpname()
     if dt.configuration.running_os == "windows" then
         tmp_file = dt.configuration.tmp_dir .. tmp_file -- windows os.tmpname() defaults to root directory
@@ -212,24 +217,42 @@ function PHOTILS.get_tags(image)
 
     local f = io.open(tmp_file, "w")
     if not f then
-        dt.print(string.format(_("Error writing to `%s`"), tmp_file))
+        dt.print_log(string.format(_("Error writing to `%s`"), tmp_file))
         os.remove(tmp_file)
-        return false
+        return nil
     end
 
+    return tmp_file
+end
+
+function PHOTILS.get_tags(image, with_export)
+    tmp_file = PHOTILS.get_tmp_file()
+    local in_arg = df.sanitize_filename(tostring(image))
+    local out_arg = df.sanitize_filename(tmp_file)
     local executable = photils_installed
+
     if dt.configuration.running_os == "macos" then
         executable =  executable .. "/Contents/MacOS/photils-cli"
     end
 
-    local in_arg = df.sanitize_filename(tostring(image))
-    local out_arg = df.sanitize_filename(tmp_file)
+    if with_export then
+        dt.print_log("use export to for prediction")
+        export_file = PHOTILS.get_tmp_file()
+        exporter:write_image(image, export_file)
+        in_arg = df.sanitize_filename(tostring(export_file))
+    end
+
     local command = executable .. " -i " .. in_arg .. " -o " .. out_arg
 
     local ret = dtsys.external_command(command)
     if ret > 0 then
         dt.print_error(string.format("command %s returned error code %d", command, ret))
         os.remove(tmp_file)
+
+        -- try to export the image and run tagging
+        if not with_export then
+            return PHOTILS.get_tags(image, true)
+        end
 
         return false
     end
@@ -267,7 +290,7 @@ function PHOTILS.on_tags_clicked()
             dt.control.sleep(2000)
         end
 
-        if not PHOTILS.get_tags(images[1]) then
+        if not PHOTILS.get_tags(images[1], false) then
             local msg = string.format(_("%s failed, see terminal output for details"), MODULE_NAME)
             GUI.warning_label.label = msg
             GUI.stack.active = GUI.error_view
