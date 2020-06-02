@@ -137,21 +137,27 @@ local GUI = {
         sensitive = false,
         clicked_callback = function() PHOTILS.attach_tags() end
     },
+    confidence_slider = dt.new_widget("slider") {
+        step = 1,
+        digits = 0,
+        value = 90,
+        hard_max = 100,
+        hard_min = 0,
+        soft_max = 100,
+        soft_min = 0,
+        label = _("Min Confidence Value")
+    },
     warning = dt.new_widget("label")
 }
 
 function PHOTILS.image_changed()
-    while not dt.control.ending do
-        local current_image = tostring(dt.gui.selection()[1])
-        if current_image ~= PHOTILS.tagged_image then
-            if PHOTILS.tagged_image ~= "" then
-                PHOTILS.tagged_image_has_changed()
-            end
-
-            PHOTILS.tagged_image = tostring(current_image)
+    local current_image = tostring(dt.gui.selection()[1])
+    if current_image ~= PHOTILS.tagged_image then
+        if PHOTILS.tagged_image ~= "" then
+            PHOTILS.tagged_image_has_changed()
         end
 
-        dt.control.sleep(100)
+        PHOTILS.tagged_image = tostring(current_image)
     end
 end
 
@@ -226,7 +232,7 @@ function PHOTILS.get_tmp_file()
 end
 
 function PHOTILS.get_tags(image, with_export)
-    tmp_file = PHOTILS.get_tmp_file()
+    local tmp_file = PHOTILS.get_tmp_file()
     local in_arg = df.sanitize_filename(tostring(image))
     local out_arg = df.sanitize_filename(tmp_file)
     local executable = photils_installed
@@ -237,12 +243,12 @@ function PHOTILS.get_tags(image, with_export)
 
     if with_export then
         dt.print_log("use export to for prediction")
-        export_file = PHOTILS.get_tmp_file()
+        local export_file = PHOTILS.get_tmp_file()
         exporter:write_image(image, export_file)
         in_arg = df.sanitize_filename(tostring(export_file))
     end
 
-    local command = executable .. " -i " .. in_arg .. " -o " .. out_arg
+    local command = executable .. " -c " .. " -i " .. in_arg .. " -o " .. out_arg
 
     local ret = dtsys.external_command(command)
     if ret > 0 then
@@ -262,7 +268,10 @@ function PHOTILS.get_tags(image, with_export)
     end
 
     for tag in io.lines(tmp_file) do
-        PHOTILS.tags[#PHOTILS.tags + 1] = tag
+        local splitted = du.split(tag, ":")
+        if 100 * tonumber(splitted[2]) >= GUI.confidence_slider.value then
+            PHOTILS.tags[#PHOTILS.tags + 1] = splitted[1]
+        end
     end
 
     dt.print(string.format(_("%s found %d tags for your image"), MODULE_NAME,
@@ -384,6 +393,7 @@ table.insert(GUI.tag_view, GUI.tag_box)
 table.insert(GUI.tag_view, GUI.attach_button)
 table.insert(GUI.tag_view, GUI.warning)
 
+table.insert(GUI.container, GUI.confidence_slider)
 table.insert(GUI.container, GUI.stack)
 
 GUI.stack.active = 1
@@ -393,7 +403,8 @@ local plugin_display_views = {
     [dt.gui.views.darkroom] = {"DT_UI_CONTAINER_PANEL_LEFT_CENTER", 100}
 }
 
-dt.control.dispatch(PHOTILS.image_changed)
+-- dt.control.dispatch(PHOTILS.image_changed)
+dt.register_event("mouse-over-image-changed",PHOTILS.image_changed)
 dt.register_lib(MODULE_NAME,
     "photils autotagger",
     true,
