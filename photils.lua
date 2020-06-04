@@ -299,7 +299,7 @@ function PHOTILS.on_tags_clicked()
             dt.control.sleep(2000)
         end
 
-        if not PHOTILS.get_tags(images[1], false) then
+        if not PHOTILS.get_tags(images[1], true) then
             local msg = string.format(_("%s failed, see terminal output for details"), MODULE_NAME)
             GUI.warning_label.label = msg
             GUI.stack.active = GUI.error_view
