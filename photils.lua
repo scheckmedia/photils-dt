@@ -23,14 +23,15 @@
    sent over the internet.
 
     ADDITIONAL SOFTWARE NEEDED FOR THIS SCRIPT
-    * photils-cli - https://github.com/scheckmedia/photils-cli
+    * photils-cli - https://github.com/scheckmedia/photils-cli at the moment only
+      available for Linux and MacOS
 
     USAGE
     * require this script from your main lua file
-    To do this add this line to the file .config/darktable/luarc:
-    require "contrib/photils"
+      To do this add this line to the file .config/darktable/luarc:
+      require "contrib/photils"
     * Select an image
-    * Press "Get Tags"
+    * Press "get tags"
     * Select the tags you want from a list of suggestions
     * Press "Attach .. Tags" to add the selected tags to your image
 --]]
@@ -85,6 +86,7 @@ local photils_installed = df.check_if_bin_exists("photils-cli")
 ]]
 local PHOTILS = {
     tags = {},
+    confidences = {},
     page = 1,
     per_page = 10,
     selected_tags = {},
@@ -97,7 +99,7 @@ local GUI = {
         orientation = "vertical",
         sensitive = true,
         dt.new_widget("button") {
-            label = _("Get Tags"),
+            label = _("get tags"),
             sensitive = photils_installed,
             clicked_callback = function() PHOTILS.on_tags_clicked() end
         },
@@ -143,7 +145,7 @@ local GUI = {
         hard_min = 0,
         soft_max = 100,
         soft_min = 0,
-        label = _("Min Confidence Value")
+        label = _("min confidence value")
     },
     warning = dt.new_widget("label")
 }
@@ -166,7 +168,7 @@ end
 function PHOTILS.paginate()
     PHOTILS.in_pagination = true
     local num_pages = math.ceil(#PHOTILS.tags / PHOTILS.per_page)
-    GUI.page_label.label = string.format(_("  Page %s of %s  "), PHOTILS.page,
+    GUI.page_label.label = string.format(_("  page %s of %s  "), PHOTILS.page,
                                          num_pages)
 
     if PHOTILS.page <= 1 then
@@ -194,9 +196,15 @@ function PHOTILS.paginate()
     local tag_index = 1
     for i = offset, offset + PHOTILS.per_page - 1, 1 do
         local tag = PHOTILS.tags[i]
+        local conf = PHOTILS.confidences[i]
+
         GUI.tag_box[tag_index].value = has_key(PHOTILS.selected_tags, tag)
 
         if tag then
+            if dt.preferences.read(MODULE_NAME, "show_confidence", "bool") then
+                tag = tag .. string.format(" (%.3f)", conf)
+            end
+
             GUI.tag_box[tag_index].label = tag
             GUI.tag_box[tag_index].sensitive = true
         else
@@ -219,24 +227,8 @@ function PHOTILS.attach_tags()
     dt.print(_("Tags successfully attached to image"))
 end
 
-function PHOTILS.get_tmp_file()
-    local tmp_file = os.tmpname()
-    if dt.configuration.running_os == "windows" then
-        tmp_file = dt.configuration.tmp_dir .. tmp_file -- windows os.tmpname() defaults to root directory
-    end
-
-    local f = io.open(tmp_file, "w")
-    if not f then
-        dt.print_log(string.format(_("Error writing to `%s`"), tmp_file))
-        os.remove(tmp_file)
-        return nil
-    end
-
-    return tmp_file
-end
-
 function PHOTILS.get_tags(image, with_export)
-    local tmp_file = PHOTILS.get_tmp_file()
+    local tmp_file = df.create_tmp_file()
     local in_arg = df.sanitize_filename(tostring(image))
     local out_arg = df.sanitize_filename(tmp_file)
     local executable = photils_installed
@@ -247,7 +239,7 @@ function PHOTILS.get_tags(image, with_export)
 
     if with_export then
         dt.print_log("use export to for prediction")
-        local export_file = PHOTILS.get_tmp_file()
+        local export_file = df.create_tmp_file()
         exporter:write_image(image, export_file)
         in_arg = df.sanitize_filename(tostring(export_file))
     end
@@ -269,12 +261,14 @@ function PHOTILS.get_tags(image, with_export)
 
     for i = #PHOTILS.tags, 1, -1 do
         PHOTILS.tags[i] = nil
+        PHOTILS.confidences[i] = nil
     end
 
     for tag in io.lines(tmp_file) do
         local splitted = du.split(tag, ":")
         if 100 * tonumber(splitted[2]) >= GUI.confidence_slider.value then
             PHOTILS.tags[#PHOTILS.tags + 1] = splitted[1]
+            PHOTILS.confidences[#PHOTILS.confidences+1] = splitted[2]
         end
     end
 
@@ -312,7 +306,7 @@ function PHOTILS.on_tags_clicked()
         end
 
         if #PHOTILS.tags == 0 then
-            local msg = string.format(_("No tags where found"), MODULE_NAME)
+            local msg = string.format(_("no tags where found"), MODULE_NAME)
             GUI.warning_label.label = msg
             GUI.stack.active = GUI.error_view
             return
@@ -327,7 +321,13 @@ function PHOTILS.tag_selected(tag_button)
     if PHOTILS.in_pagination then return end
 
     if tag_button.value then
-        PHOTILS.selected_tags[tag_button.label] = tag_button.label
+        local tag = tag_button.label
+        if dt.preferences.read(MODULE_NAME, "show_confidence", "bool") then
+            local idx = string.find(tag, "%(") - 2
+            tag = string.sub(tag, 0, idx)
+        end
+
+        PHOTILS.selected_tags[tag] = tag
     else
         PHOTILS.selected_tags[tag_button.label] = nil
     end
@@ -337,7 +337,7 @@ function PHOTILS.tag_selected(tag_button)
         GUI.attach_button.label = ""
         GUI.attach_button.sensitive = false
     else
-        GUI.attach_button.label = string.format(_("Attach %d Tags"),
+        GUI.attach_button.label = string.format(_("attach %d tags"),
                                                 num_selected)
         GUI.attach_button.sensitive = true
     end
@@ -373,7 +373,7 @@ if not photils_installed then
     GUI.warning_label.label = _("photils-cli not found")
     dt.print_log(_("photils-cli not found"))
 else
-    GUI.warning_label.label = _("Select an image, click \"Get Tags\" and get \nsuggestions for tags.")
+    GUI.warning_label.label = _("Select an image, click \"get tags\" and get \nsuggestions for tags.")
 end
 
 GUI.pagination = dt.new_widget("box") {
@@ -407,7 +407,15 @@ local plugin_display_views = {
     [dt.gui.views.darkroom] = {"DT_UI_CONTAINER_PANEL_LEFT_CENTER", 100}
 }
 
--- dt.control.dispatch(PHOTILS.image_changed)
+
+-- uses photils: prefix because script settings are all together and not seperated by script
+dt.preferences.register(MODULE_NAME,
+                        "show_confidence",
+                        "bool",
+                        _("photils: show confidence value"),
+                        _("if enabled, the confidence value for each tag is displayed"),
+                        true)
+
 dt.register_event("mouse-over-image-changed",PHOTILS.image_changed)
 dt.register_lib(MODULE_NAME,
     "photils autotagger",
