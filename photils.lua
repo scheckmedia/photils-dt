@@ -39,11 +39,13 @@
 local dt = require "darktable"
 local du = require "lib/dtutils"
 local df = require "lib/dtutils.file"
+           require "lib/darktable_transition"
 local dtsys = require "lib/dtutils.system"
 
 local MODULE_NAME = "photils"
 du.check_min_api_version("5.0.0", MODULE_NAME)
 
+local CURR_API_STRING = dt.configuration.api_version_string
 local PS = dt.configuration.running_os == "windows" and "\\" or "/"
 local gettext = dt.gettext
 gettext.bindtextdomain(MODULE_NAME,
@@ -91,7 +93,13 @@ local PHOTILS = {
     per_page = 10,
     selected_tags = {},
     in_pagination = false,
-    tagged_image = ""
+    tagged_image = "",
+    module_installed = false,
+    event_registered = false,
+    plugin_display_views = {
+      [dt.gui.views.lighttable] = {"DT_UI_CONTAINER_PANEL_RIGHT_CENTER", 100},
+      [dt.gui.views.darkroom] = {"DT_UI_CONTAINER_PANEL_LEFT_CENTER", 100}
+    },
 }
 
 local GUI = {
@@ -135,7 +143,7 @@ local GUI = {
     attach_button = dt.new_widget("button") {
         label = "",
         sensitive = false,
-        clicked_callback = function() PHOTILS.attach_tags() end
+        clicked_callback = function(self) PHOTILS.attach_tags() end
     },
     confidence_slider = dt.new_widget("slider") {
         step = 1,
@@ -218,16 +226,25 @@ function PHOTILS.paginate()
 end
 
 function PHOTILS.attach_tags()
-    local image = dt.gui.selection()[1]
-    for tag, _ in pairs(PHOTILS.selected_tags) do
-        local dt_tag = dt.tags.create(tag)
-        dt.tags.attach(dt_tag, image)
+    local num_selected = #dt.gui.selection()
+    local job = dt.gui.create_job(_("Apply tag to image"), true)
+
+    for i = 1, num_selected, 1 do
+        local image = dt.gui.selection()[i]
+        for tag, _ in pairs(PHOTILS.selected_tags) do
+            local dt_tag = dt.tags.create(tag)
+            dt.tags.attach(dt_tag, image)
+        end
+
+        job.percent = i / num_selected
+        dt.print(_("Tags successfully attached to image"))
     end
 
-    dt.print(_("Tags successfully attached to image"))
+    job.valid = false
 end
 
 function PHOTILS.get_tags(image, with_export)
+
     local tmp_file = df.create_tmp_file()
     local in_arg = df.sanitize_filename(tostring(image))
     local out_arg = df.sanitize_filename(tmp_file)
@@ -297,7 +314,8 @@ function PHOTILS.on_tags_clicked()
             dt.control.sleep(2000)
         end
 
-        if not PHOTILS.get_tags(images[1], true) then
+        with_export = dt.preferences.read(MODULE_NAME, "export_image_before_for_tags", "bool")
+        if not PHOTILS.get_tags(images[1], with_export) then
             local msg = string.format(_("%s failed, see terminal output for details"), MODULE_NAME)
             GUI.warning_label.label = msg
             GUI.stack.active = GUI.error_view
@@ -358,6 +376,21 @@ function PHOTILS.on_reset(with_view)
     GUI.attach_button.sensitive = false
 end
 
+local function install_module()
+  if not PHOTILS.module_installed then
+    dt.register_lib(MODULE_NAME,
+        "photils autotagger",
+        true,
+        true,
+        PHOTILS.plugin_display_views,
+        GUI.container,
+        nil,
+        nil
+    )
+    PHOTILS.module_installed = true
+  end
+end
+
 -- add a fix number of buttons
 for _ = 1, PHOTILS.per_page, 1 do
     local btn_tag = dt.new_widget("check_button") {
@@ -402,10 +435,6 @@ table.insert(GUI.container, GUI.stack)
 
 GUI.stack.active = 1
 
-local plugin_display_views = {
-    [dt.gui.views.lighttable] = {"DT_UI_CONTAINER_PANEL_RIGHT_CENTER", 100},
-    [dt.gui.views.darkroom] = {"DT_UI_CONTAINER_PANEL_LEFT_CENTER", 100}
-}
 
 
 -- uses photils: prefix because script settings are all together and not seperated by script
@@ -416,13 +445,31 @@ dt.preferences.register(MODULE_NAME,
                         _("if enabled, the confidence value for each tag is displayed"),
                         true)
 
-dt.register_event("mouse-over-image-changed",PHOTILS.image_changed)
-dt.register_lib(MODULE_NAME,
-    "photils autotagger",
-    true,
-    true,
-    plugin_display_views,
-    GUI.container,
-    nil,
-    nil
-)
+dt.preferences.register(MODULE_NAME,
+                        "export_image_before_for_tags",
+                        "bool",
+                        _("photils: use exported image for tag request"),
+                        _("If enabled, the image passed to photils for tag suggestion is based on the exported, already edited image. " ..
+                          "Otherwise, the embedded thumbnail of the RAW file will be used for tag suggestion." ..
+                          "The embedded thumbnail could speedup the tag suggestion but can fail if the RAW file is not supported."),
+                        true)
+
+dt.register_event("photils", "mouse-over-image-changed",
+    PHOTILS.image_changed)
+
+if dt.gui.current_view().id == "lighttable" then
+  install_module()
+else
+  if not PHOTILS.event_registered then
+    dt.register_event(
+      "photils", "view-changed",
+      function(event, old_view, new_view)
+        if new_view.name == "lighttable" and old_view.name == "darkroom" then
+          install_module()
+         end
+      end
+    )
+    PHOTILS.event_registered = true
+  end
+end
+
