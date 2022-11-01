@@ -8,7 +8,7 @@ A darktable plugin that tries to predict keywords based on the selected image. T
 | -------- | -------------------- |
 | Linux    | <center>✔️</center>   |
 | MacOS    | <center>✔️</center>   |
-| Windows  | <center>WIP</center> |
+| Windows  | <center>✔️</center> |
 
 ## Requirements
 * photils-cli - https://github.com/scheckmedia/photils-cli
